@@ -70,7 +70,7 @@ def trim_tubes(start_id, numc, paths, childs, args, topk=5, alpha=3, min_len=3, 
         
         # print(allScores.shape)
         if args.MODE == "eval_external":
-            get_topk = get_topk_classes_avg
+            get_topk = get_topk_classes #get_topk_classes_avg
         else:
             get_topk = get_topk_classes
         if trim_method == 'thresh':
