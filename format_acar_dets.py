@@ -27,7 +27,13 @@ def format_acar_dets(args):
     # read predictions csv into dataframe. predict_epoch_{}.csv has no headers.
     # columns are {video, frame, xmin, ymin, xmax, ymax, action, confidence} in that order
     predictions_df = pd.read_csv(args.PRED_CSV, header = None)
-    predictions_df.columns = ["video", "frame", "xmin", "ymin", "xmax", "ymax", "action", "confidence"]
+    # count number of columns in dataframe
+    if predictions_df.shape[1] > 8:
+        # if there are more than 8 columns, we have tube-ids.
+        tube_ids = True
+        predictions_df.columns = ["video", "frame", "xmin", "ymin", "xmax", "ymax", "action", "confidence", "tube_id"]
+    else:
+        predictions_df.columns = ["video", "frame", "xmin", "ymin", "xmax", "ymax", "action", "confidence"]
     formatted_predictions = {}
     print(f"Formatting predictions from {args.PRED_CSV}")
     for _, row in tqdm(predictions_df.iterrows()):
@@ -40,7 +46,8 @@ def format_acar_dets(args):
             formatted_predictions[row['video']][row['frame']][box_hash] = {
                 # Magic number time
                 'bbox': [float(row['xmin'])*682, float(row['ymin'])*512, float(row['xmax'])*682, float(row['ymax'])*512],
-                'confidences': [0]*19
+                'confidences': [0]*19, 
+                'tube_id': row['tube_id'] if tube_ids else None
             }
         # action class is 1 indexed, so subtract 1
         action_idx = action_class_selection_map[int(row['action'])-1]
@@ -54,10 +61,12 @@ def format_acar_dets(args):
     print(f"Writing .pkl files to {args.ACAR_DET_SAVE_DIR}")
     for video_name, video in tqdm(formatted_predictions.items()):
         for frame_num, annos in video.items():
-            save_data = {'main': np.zeros((len(annos), 23))}
+            save_data = {'main': np.zeros((len(annos), 23)),
+                         'tube_ids': []}
             for i, anno in enumerate(annos.values()):
                 save_data['main'][i][0:4] = np.array(anno['bbox'])
                 save_data['main'][i][4:23] = np.array(anno['confidences'])
+                save_data['tube_ids'].append(anno['tube_id'])
             if not os.path.exists(os.path.join(args.ACAR_DET_SAVE_DIR, video_name)):
                 os.makedirs(os.path.join(args.ACAR_DET_SAVE_DIR, video_name))
             with open(f"{args.ACAR_DET_SAVE_DIR}/{video_name}/%05d.pkl" % frame_num, 'wb') as f:

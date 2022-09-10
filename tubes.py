@@ -49,8 +49,13 @@ def build_eval_tubes(args, val_dataset):
         tt0 = time.perf_counter()
         log_file.write('Building tubes......\n')
         
-        
-        paths = perform_building(args, val_dataset.video_list, epoch)
+        # TODO write a new function to build tubes using the tube uids from OCSORT
+        if 'test' in args.SUBSETS:
+            val_dataset.video_list = ["2014-06-26-09-31-18_stereo_centre_02","2014-12-10-18-10-50_stereo_centre_02", "2015-02-03-08-45-10_stereo_centre_04", "2015-02-06-13-57-16_stereo_centre_01"]
+        if args.MODE == "eval_external":
+            paths = perform_building_with_tubeids(args, val_dataset.video_list)
+        else:
+            paths = perform_building(args, val_dataset.video_list, epoch)
         childs = []
         if args.JOINT_4M_MARGINALS:
             childs = val_dataset.childs
@@ -127,6 +132,73 @@ def build_eval_tubes(args, val_dataset):
                 logger.info(table) 
         log_file.close()
 
+def perform_building_with_tubeids(args, video_list):
+    """
+    Perform tube building with tubeids already given in the data.
+
+    returns:
+        {
+            'videoname':[
+                tubes: {
+                    'boxes': array of n boxes corresponding the number of boxes that have a tube id
+                    'scores': array of n scores corresponding to the number of boxes that have a tube id, since we dont
+                            take into account the score of the box pred after the detector, set all of these to 1
+                    'allScores': array of shape (n, num_classes) where each row is the confidences of the corresponding box for each class.
+                    'foundAt': list of n frame ids corresponding to the number of boxes that have a tube id
+                    'count': the number n referred to above.
+                }
+                ...
+            ]
+            ...
+        }
+        
+    """
+    all_paths = {}
+    for videoname in video_list:
+        video_dir = os.path.join(args.det_save_dir, videoname)
+        assert os.path.isdir(
+            video_dir), 'Detection should exist @ ' + video_dir        
+        agent_path_save_name = args.tube_save_dir + videoname + '_paths.pkl'.format()
+        
+        paths = {}
+        if args.COMPUTE_PATHS or not os.path.isfile(agent_path_save_name):
+            frames_names = os.listdir(video_dir)
+            frame_ids = [int(fn.split('.')[0]) for fn in frames_names if fn.endswith('.pkl')]
+            for frame_num in sorted(frame_ids):
+                save_name = '{:s}/{:05d}.pkl'.format(video_dir, frame_num)
+                with open(save_name, 'rb') as f:
+                    det_boxes = pickle.load(f)
+                
+                # create paths if they dont yet exist
+                for i, tube_id in enumerate(det_boxes['tube_ids']):
+                    if tube_id not in paths:
+                        paths[tube_id] = {'boxes': [], 'foundAt': []} # faster to first have a list of arrays, then convert to array later.
+                    paths[tube_id]['boxes'].append(det_boxes['main'][i])
+                    paths[tube_id]['foundAt'].append(frame_num)          
+                
+            formatted_paths = []
+            for tube_id, tube in paths.items():
+                tube['boxes'] = np.array(tube['boxes'])
+                formatted_paths.append({
+                    'boxes': tube['boxes'][:, :4],
+                    'scores': np.ones(len(tube['boxes'])),
+                    'allScores': tube['boxes'][:, 4:],
+                    'foundAt': tube['foundAt'],
+                    'count': len(tube['foundAt'])  
+                })
+            
+            logger.info(f"Built {len(paths)} tubes from prior tube ids in {videoname}")
+            
+            ## dump agent paths to disk
+            with open(agent_path_save_name,'wb') as f:
+                pickle.dump(formatted_paths, f)
+        else:
+            with open(agent_path_save_name, 'rb') as f:
+                formatted_paths = pickle.load(f)
+        all_paths[videoname] = formatted_paths
+    
+    return all_paths
+
 def perform_building(args, video_list, epoch):
 
     """Build agent-level tube or called paths"""
@@ -162,7 +234,8 @@ def perform_building(args, video_list, epoch):
                 det_boxes = det_boxes['main']
                 pickn = min(args.TOPK, det_boxes.shape[0])
                 
-                det_boxes = det_boxes[:args.TOPK,:]
+                # this means only take the topk boxes per frame. We are assuming here that the topk boxes are in order of confidence. 
+                det_boxes = det_boxes[:args.TOPK,:] 
                 if args.MODE != "eval_external":
                     det_boxes = det_boxes[det_boxes[:,4]>args.CONF_THRESH,:]
 

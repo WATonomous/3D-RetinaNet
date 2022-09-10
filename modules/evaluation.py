@@ -389,6 +389,7 @@ def evaluate_tubes(anno_file, det_file, mode, subset='val_3', dataset='road', io
             class_dets = get_det_class_tubes(det_tubes, cl_id)
             class_gts = get_gt_class_tubes(gt_tubes, cl_id)
 
+            pickle.dump({'dets': class_dets, 'gts':class_gts}, open(f"{final_annots['action_labels'][cl_id]}_topk10_dets.pkl", 'wb'))
             class_ap, num_postives, count, recall = compute_class_ap(class_dets, class_gts, get_tube_3Diou, iou_thresh, metric_type=metric_type)
 
             recall = recall*100
