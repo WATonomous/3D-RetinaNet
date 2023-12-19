@@ -25,13 +25,14 @@ def main():
     parser.add_argument('SAVE_ROOT', help='Location to root directory for saving checkpoint models') # /mnt/mars-alpha/
     parser.add_argument('MODEL_PATH',help='Location to root directory where kinetics pretrained models are stored')
     parser.add_argument('--ACAR_DET_SAVE_DIR', default = "./acar", help='Location to root directory for saved acar detection results')
-    parser.add_argument('--PRED_CSV', default ="/project/action-classification/output/train_1/text/predict_epoch_11.csv", help="location of the prediction file that we want to use") 
+    parser.add_argument('--PRED_CSV', default ="/project/action-classification/output/tube_norm/text/predict_epoch_11.csv", help="location of the prediction file that we want to use") 
     #parser.add_argument('--PRED_CSV', default ="/road/tube_robust_30_01.csv", help="location of the prediction file that we want to use")
     #parser.add_argument('--PRED_CSV', default ="/road/predict_epoch_6.csv", help="location of the prediction file that we want to use")
     #parser.add_argument('--PRED_CSV', default ="../action-classification/output/text/predict_epoch_11.csv", help="location of the prediction file that we want to use")
     parser.add_argument('--ACTION_THRESHOLD', default=0.025, type=float, help="threshold for making action classification tubes")
+    parser.add_argument('--REMOVE_LOW_THRESH', default=0.001, type=float, help="threshold for making action classification tubes")
 
-    parser.add_argument('--MODE', default='train',
+    parser.add_argument('--MODE', default='eval_external',
                         help='MODE can be train, gen_dets, eval_frames, eval_tubes, eval_external define SUBSETS accordingly, build tubes')
     # Name of backbone network, e.g. resnet18, resnet34, resnet50, resnet101 resnet152 are supported
     parser.add_argument('--ARCH', default='resnet50', 

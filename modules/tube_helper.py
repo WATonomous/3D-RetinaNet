@@ -131,11 +131,12 @@ def trim_tubes(start_id, numc, paths, childs, args, topk=5, alpha=3, min_len=3, 
             # print('no trimming')
             topk_classes, topk_scores = get_topk(allScores, topk)
             for i in range(topk):
-                #if topk_scores[i] < 0.01:
+                # if topk_scores[i] < 0.01:
                 #    continue
                 label, start, end = topk_classes[i], path_start_frame, allScores.shape[0] + path_start_frame 
                 std = np.std(allScores)
-                mask = allScores[:, label] > 0.001
+                mask = allScores[:, label] > args.REMOVE_LOW_THRESH
+                # mask = allScores[:, label] > 0.001
                 if not any(mask):
                     continue
                 locs = np.where(mask == True)[0]
