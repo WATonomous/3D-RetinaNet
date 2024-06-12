@@ -1,8 +1,3 @@
-
-""" 
- Build tubes and evaluate
-"""
-
 import os
 import time, json
 import datetime
@@ -25,13 +20,22 @@ def build_eval_tubes(args, val_dataset):
     for epoch in args.EVAL_EPOCHS:
         args.det_itr = epoch
         logger.info('Building tubes at ' + str(epoch))
-        log_file = open("{pt:s}/tubeing-{it:02d}-{sq:02d}.log".format(pt=args.SAVE_ROOT, it=epoch, sq=args.TEST_SEQ_LEN), "w", 10)
+        if args.MODE == "eval_external":
+            if not os.path.exists(os.path.join(args.ACAR_DET_SAVE_DIR, "processed")):
+                os.makedirs(os.path.join(args.ACAR_DET_SAVE_DIR, "processed"))
+            args.det_save_dir = args.ACAR_DET_SAVE_DIR
+            log_file = open(os.path.join(args.det_save_dir, "processed/tubeing.log"), "w", 10)
+            args.tube_save_dir = os.path.join(args.det_save_dir, "processed/tubes/")
+            tube_file = os.path.join(args.tube_save_dir, "tubes.pkl")
+        else:
+            log_file = open("{pt:s}/tubeing-{it:02d}-{sq:02d}.log".format(pt=args.SAVE_ROOT, it=epoch, sq=args.TEST_SEQ_LEN), "w", 10)
+            
+            args.det_save_dir = args.det_save_dir = os.path.join(args.SAVE_ROOT, "detections-{it:02d}-{sq:02d}-{n:d}/".format(it=epoch, sq=args.TEST_SEQ_LEN, n=int(100*args.GEN_NMS)))
+            args.tube_save_dir = "{pt:s}/tubes-{it:02d}-{sq:02d}-{n:d}-{tk:d}-{s:s}-{io:d}-{jp:d}/".format(pt=args.SAVE_ROOT, it=epoch,  
+                                sq=args.TEST_SEQ_LEN,  n=int(100*args.GEN_NMS), tk=args.TOPK, s=args.PATHS_COST_TYPE,
+                                io=int(args.PATHS_IOUTH*100), jp=args.PATHS_JUMP_GAP)
+            tube_file = args.tube_save_dir+ 'tubes_{}_{:d}.pkl'.format(args.TRIM_METHOD, int(args.TUBES_ALPHA*10))
         
-        args.det_save_dir = args.det_save_dir = os.path.join(args.SAVE_ROOT, "detections-{it:02d}-{sq:02d}-{n:d}/".format(it=epoch, sq=args.TEST_SEQ_LEN, n=int(100*args.GEN_NMS)))
-        args.tube_save_dir = "{pt:s}/tubes-{it:02d}-{sq:02d}-{n:d}-{tk:d}-{s:s}-{io:d}-{jp:d}/".format(pt=args.SAVE_ROOT, it=epoch,  
-                            sq=args.TEST_SEQ_LEN,  n=int(100*args.GEN_NMS), tk=args.TOPK, s=args.PATHS_COST_TYPE,
-                            io=int(args.PATHS_IOUTH*100), jp=args.PATHS_JUMP_GAP)
-        tube_file = args.tube_save_dir+ 'tubes_{}_{:d}.pkl'.format(args.TRIM_METHOD, int(args.TUBES_ALPHA*10))
         if args.JOINT_4M_MARGINALS:
             tube_file = args.tube_save_dir+ 'tubes_{}_{:d}-j4m.pkl'.format(args.TRIM_METHOD, int(args.TUBES_ALPHA*10))
             log_file = open("{pt:s}/tubeing-{it:02d}-{sq:02d}-j4m.log".format(pt=args.SAVE_ROOT, it=epoch, sq=args.TEST_SEQ_LEN), "w", 10)
@@ -45,8 +49,13 @@ def build_eval_tubes(args, val_dataset):
         tt0 = time.perf_counter()
         log_file.write('Building tubes......\n')
         
-        
-        paths = perform_building(args, val_dataset.video_list, epoch)
+        # TODO write a new function to build tubes using the tube uids from OCSORT
+        if 'test' in args.SUBSETS:
+            val_dataset.video_list = ["2014-06-26-09-31-18_stereo_centre_02","2014-12-10-18-10-50_stereo_centre_02", "2015-02-03-08-45-10_stereo_centre_04", "2015-02-06-13-57-16_stereo_centre_01"]
+        if args.MODE == "eval_external":
+            paths = perform_building_with_tubeids(args, val_dataset.video_list)
+        else:
+            paths = perform_building(args, val_dataset.video_list, epoch)
         childs = []
         if args.JOINT_4M_MARGINALS:
             childs = val_dataset.childs
@@ -58,13 +67,20 @@ def build_eval_tubes(args, val_dataset):
         # result_file = args.SAVE_ROOT + '/video-map-results.json'
         results = {}
         table = '\n|class'
-        map_line = ['|mAP |' for _ in range(len(args.SUBSETS)*len(args.label_types[1:]))]
+        if args.MODE == "eval_external":
+            label_types = args.label_types
+        else:
+            label_types = args.label_types[1:]
+        map_line = ['|mAP |' for _ in range(len(args.SUBSETS)*len(label_types))]
         metric_types = ['stiou'] #['tiou','siou','stiou']
         for metric_type in metric_types:
             for TUBES_EVAL_THRESH in args.TUBES_EVAL_THRESHS:
                 table += '|{:s} {:0.02f}'.format(metric_type, TUBES_EVAL_THRESH)
                 
-                result_file = "{pt:s}/video-ap-results-{tm:s}-{a:d}-{th:d}-{m:s}.json".format(tm=args.TRIM_METHOD, a=int(args.TUBES_ALPHA*10), pt=args.tube_save_dir, th=int(TUBES_EVAL_THRESH*100), m=metric_type)
+                if args.MODE == "eval_external":
+                    result_file = os.path.join(args.det_save_dir, "processed/video-ap-results.json")
+                else:
+                    result_file = "{pt:s}/video-ap-results-{tm:s}-{a:d}-{th:d}-{m:s}.json".format(tm=args.TRIM_METHOD, a=int(args.TUBES_ALPHA*10), pt=args.tube_save_dir, th=int(TUBES_EVAL_THRESH*100), m=metric_type)
                 if args.JOINT_4M_MARGINALS:
                     result_file = "{pt:s}/video-ap-results-{tm:s}-{a:d}-{th:d}-{m:s}-j4m.json".format(tm=args.TRIM_METHOD, a=int(args.TUBES_ALPHA*10), pt=args.tube_save_dir, th=int(TUBES_EVAL_THRESH*100), m=metric_type)
                 
@@ -72,8 +88,8 @@ def build_eval_tubes(args, val_dataset):
                 for subset in args.SUBSETS:
                     if len(subset)<2:
                         continue
-                    sresults = evaluate_tubes(val_dataset.anno_file, tube_file, dataset=args.DATASET, subset=subset, iou_thresh=TUBES_EVAL_THRESH, metric_type=metric_type)
-                    for _, label_type in enumerate(args.label_types[1:]):
+                    sresults = evaluate_tubes(val_dataset.anno_file, tube_file, args.MODE, dataset=args.DATASET, subset=subset, iou_thresh=TUBES_EVAL_THRESH, metric_type=metric_type)
+                    for _, label_type in enumerate(label_types):
                         name = subset + ' & ' + label_type
                         rstr = '\n\nResults for {:s} @ {:0.02f} {:s}\n'.format(name, TUBES_EVAL_THRESH, metric_type)
                         logger.info(rstr)
@@ -93,7 +109,7 @@ def build_eval_tubes(args, val_dataset):
         for subset in args.SUBSETS:
             if len(subset)<2:
                 continue
-            for nlt, label_type in enumerate(args.label_types[1:]):
+            for nlt, label_type in enumerate(label_types):
                 name = subset + ' & ' + label_type
                 print(args.label_types, len(args.all_classes))
                 table += '|\n'
@@ -103,7 +119,10 @@ def build_eval_tubes(args, val_dataset):
                     table += '|{:s}'.format(cls)
                     for metric_type in metric_types:
                         for TUBES_EVAL_THRESH in args.TUBES_EVAL_THRESHS:
-                            result_file = "{pt:s}/video-ap-results-{tm:s}-{a:d}-{th:d}-{m:s}.json".format(tm=args.TRIM_METHOD, a=int(args.TUBES_ALPHA*10), pt=args.tube_save_dir, th=int(TUBES_EVAL_THRESH*100), m=metric_type)
+                            if args.MODE == "eval_external":
+                                result_file = os.path.join(args.det_save_dir, "processed/video-ap-results.json")
+                            else:
+                                result_file = "{pt:s}/video-ap-results-{tm:s}-{a:d}-{th:d}-{m:s}.json".format(tm=args.TRIM_METHOD, a=int(args.TUBES_ALPHA*10), pt=args.tube_save_dir, th=int(TUBES_EVAL_THRESH*100), m=metric_type)
                             if args.JOINT_4M_MARGINALS:
                                 result_file = "{pt:s}/video-ap-results-{tm:s}-{a:d}-{th:d}-{m:s}-j4m.json".format(tm=args.TRIM_METHOD, a=int(args.TUBES_ALPHA*10), pt=args.tube_save_dir, th=int(TUBES_EVAL_THRESH*100), m=metric_type)
                             with open(result_file, 'r') as f:
@@ -113,6 +132,73 @@ def build_eval_tubes(args, val_dataset):
                 logger.info(table) 
         log_file.close()
 
+def perform_building_with_tubeids(args, video_list):
+    """
+    Perform tube building with tubeids already given in the data.
+
+    returns:
+        {
+            'videoname':[
+                tubes: {
+                    'boxes': array of n boxes corresponding the number of boxes that have a tube id
+                    'scores': array of n scores corresponding to the number of boxes that have a tube id, since we dont
+                            take into account the score of the box pred after the detector, set all of these to 1
+                    'allScores': array of shape (n, num_classes) where each row is the confidences of the corresponding box for each class.
+                    'foundAt': list of n frame ids corresponding to the number of boxes that have a tube id
+                    'count': the number n referred to above.
+                }
+                ...
+            ]
+            ...
+        }
+        
+    """
+    all_paths = {}
+    for videoname in video_list:
+        video_dir = os.path.join(args.det_save_dir, videoname)
+        assert os.path.isdir(
+            video_dir), 'Detection should exist @ ' + video_dir        
+        agent_path_save_name = args.tube_save_dir + videoname + '_paths.pkl'.format()
+        
+        paths = {}
+        if args.COMPUTE_PATHS or not os.path.isfile(agent_path_save_name):
+            frames_names = os.listdir(video_dir)
+            frame_ids = [int(fn.split('.')[0]) for fn in frames_names if fn.endswith('.pkl')]
+            for frame_num in sorted(frame_ids):
+                save_name = '{:s}/{:05d}.pkl'.format(video_dir, frame_num)
+                with open(save_name, 'rb') as f:
+                    det_boxes = pickle.load(f)
+                
+                # create paths if they dont yet exist
+                for i, tube_id in enumerate(det_boxes['tube_ids']):
+                    if tube_id not in paths:
+                        paths[tube_id] = {'boxes': [], 'foundAt': []} # faster to first have a list of arrays, then convert to array later.
+                    paths[tube_id]['boxes'].append(det_boxes['main'][i])
+                    paths[tube_id]['foundAt'].append(frame_num)          
+                
+            formatted_paths = []
+            for tube_id, tube in paths.items():
+                tube['boxes'] = np.array(tube['boxes'])
+                formatted_paths.append({
+                    'boxes': tube['boxes'][:, :4],
+                    'scores': np.ones(len(tube['boxes'])),
+                    'allScores': tube['boxes'][:, 4:],
+                    'foundAt': tube['foundAt'],
+                    'count': len(tube['foundAt'])  
+                })
+            
+            logger.info(f"Built {len(paths)} tubes from prior tube ids in {videoname}")
+            
+            ## dump agent paths to disk
+            with open(agent_path_save_name,'wb') as f:
+                pickle.dump(formatted_paths, f)
+        else:
+            with open(agent_path_save_name, 'rb') as f:
+                formatted_paths = pickle.load(f)
+        all_paths[videoname] = formatted_paths
+    
+    return all_paths
+
 def perform_building(args, video_list, epoch):
 
     """Build agent-level tube or called paths"""
@@ -120,7 +206,7 @@ def perform_building(args, video_list, epoch):
     all_paths = {}
     for videoname in video_list:
         total_dets = 0
-        video_dir = args.det_save_dir + videoname + '/'
+        video_dir = os.path.join(args.det_save_dir, videoname)
         assert os.path.isdir(
             video_dir), 'Detection should exist @ ' + video_dir
         if args.DATASET == 'ucf24':
@@ -133,7 +219,10 @@ def perform_building(args, video_list, epoch):
         if args.COMPUTE_PATHS or not os.path.isfile(agent_path_save_name):
             frames_names = os.listdir(video_dir)
             frame_ids = [int(fn.split('.')[0]) for fn in frames_names if fn.endswith('.pkl')]
-            num_classes_to_use = args.num_classes_list[0] + args.num_classes_list[1]
+            if args.MODE == "eval_external":
+                num_classes_to_use = args.num_classes_list[0]
+            else:
+                num_classes_to_use = args.num_classes_list[0] + args.num_classes_list[1]
             t1 = time.perf_counter()
             live_paths = []
             dead_paths = []
@@ -145,14 +234,19 @@ def perform_building(args, video_list, epoch):
                 det_boxes = det_boxes['main']
                 pickn = min(args.TOPK, det_boxes.shape[0])
                 
-                det_boxes = det_boxes[:args.TOPK,:]
-                det_boxes = det_boxes[det_boxes[:,4]>args.CONF_THRESH,:]
+                # this means only take the topk boxes per frame. We are assuming here that the topk boxes are in order of confidence. 
+                det_boxes = det_boxes[:args.TOPK,:] 
+                if args.MODE != "eval_external":
+                    det_boxes = det_boxes[det_boxes[:,4]>args.CONF_THRESH,:]
 
                 num_dets = 0
                 if det_boxes.shape[0]>0:
                     frame = {}
                     frame['boxes'] = det_boxes[:,:4]
-                    frame['scores'] = det_boxes[:,4]
+                    if args.MODE == "eval_external":
+                        frame['scores'] = np.ones(len(det_boxes))
+                    else:
+                        frame['scores'] = det_boxes[:,4]
                     frame['allScores'] = det_boxes[:,4:]
                     num_dets = det_boxes.shape[0]
 
@@ -203,15 +297,25 @@ def make_tubes(args, paths, video_list, childs, tube_file):
     if args.COMPUTE_TUBES or not os.path.isfile(tube_file):
         # logger.info('building agent tubes')
         detection_tubes = {}
-        for ltype in args.label_types[1:]:
+        if args.MODE == "eval_external":
+            label_types = args.label_types
+        else:
+            label_types = args.label_types[1:]
+        for ltype in label_types:
             detection_tubes[ltype] = {}
         for vid, videoname in enumerate(video_list):
-            start_id = 1
-            for nlt, ltype in  enumerate(args.label_types[1:]):
+            if args.MODE == "eval_external":
+                start_id = 0
+            else:
+                start_id = 1
+            for nlt, ltype in enumerate(label_types):
                 logger.info('building tubes for '+ ltype)
                 # print(args.num_classes_list, args.label_types)
-                numc = args.num_classes_list[nlt+1]
-                all_tubes = trim_tubes(start_id, numc, copy.deepcopy(paths[videoname]), childs, args.num_classes_list, topk=args.TUBES_TOPK, alpha=args.TUBES_ALPHA, min_len=args.TUBES_MINLEN, trim_method=args.TRIM_METHOD)
+                if args.MODE == "eval_external":
+                    numc = args.num_classes_list[nlt]
+                else:
+                    numc = args.num_classes_list[nlt+1]
+                all_tubes = trim_tubes(start_id, numc, copy.deepcopy(paths[videoname]), childs, args, topk=args.TUBES_TOPK, alpha=args.TUBES_ALPHA, min_len=args.TUBES_MINLEN, trim_method=args.TRIM_METHOD)
                 # det_tubes = apply_labelwise_nms(all_tubes)
                 detection_tubes[ltype][videoname] = all_tubes
                 start_id += numc

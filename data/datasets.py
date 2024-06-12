@@ -7,6 +7,7 @@ coordinates are in range of [0, 1] normlised height and width
 """
 
 import json, os
+from typing import final
 import torch
 import pdb, time
 import torch.utils as tutils
@@ -249,7 +250,7 @@ class VideoDataset(tutils.data.Dataset):
         self.transform = transform
         self.ids = list()
         if self.DATASET == 'road':
-            self._make_lists_road()  
+            self._make_lists_road(args.MODE)  
         elif self.DATASET == 'ucf24':
             self._make_lists_ucf24() 
         self.num_label_types = len(self.label_types)
@@ -351,7 +352,7 @@ class VideoDataset(tutils.data.Dataset):
         self.print_str = ptrstr
         
         
-    def _make_lists_road(self):
+    def _make_lists_road(self, mode):
 
         self.anno_file  = os.path.join(self.root, 'road_trainval_v1.0.json')
 
@@ -359,12 +360,20 @@ class VideoDataset(tutils.data.Dataset):
             final_annots = json.load(fff)
         
         database = final_annots['db']
-        
-        self.label_types =  final_annots['label_types'] #['agent', 'action', 'loc', 'duplex', 'triplet'] #
+        if mode == 'eval_external':
+            # when evaluating acar, we are only concerned with agent and action label types
+            #['agent', 'action', 'loc', 'duplex', 'triplet'] #
+            self.label_types = final_annots['label_types'][1:2] # just action classification
+        else:
+            self.label_types = final_annots['label_types']
         
         num_label_type = 5
-        self.num_classes = 1 ## one for presence
-        self.num_classes_list = [1]
+        if mode == 'eval_external':
+            self.num_classes = 0
+            self.num_classes_list = []
+        else:
+            self.num_classes = 1 ## one for presence
+            self.num_classes_list = [1]
         for name in self.label_types: 
             logger.info('Number of {:s}: all :: {:d} to use: {:d}'.format(name, 
                 len(final_annots['all_'+name+'_labels']),len(final_annots[name+'_labels'])))
@@ -425,14 +434,19 @@ class VideoDataset(tutils.data.Dataset):
                         all_boxes.append(box)
                         box_labels = np.zeros(self.num_classes)
                         list_box_labels = []
-                        cc = 1
+                        if mode == 'eval_external':
+                            cc = 0
+                        else:
+                            cc = 1
                         for idx, name in enumerate(self.label_types):
                             filtered_ids = filter_labels(anno[name+'_ids'], final_annots['all_'+name+'_labels'], final_annots[name+'_labels'])
                             list_box_labels.append(filtered_ids)
                             for fid in filtered_ids:
                                 box_labels[fid+cc] = 1
-                                box_labels[0] = 1
-                            cc += self.num_classes_list[idx+1]
+                                if mode != 'eval_external':
+                                    box_labels[0] = 1
+                            if mode != 'eval_external':
+                                cc += self.num_classes_list[idx+1]
 
                         all_labels.append(box_labels)
 
@@ -478,7 +492,8 @@ class VideoDataset(tutils.data.Dataset):
         
         ptrstr += 'Number of ids are {:d}\n'.format(len(self.ids))
 
-        self.label_types = ['agent_ness'] + self.label_types
+        if mode != "eval_external":
+            self.label_types = ['agent_ness'] + self.label_types
         self.childs = {'duplex_childs':final_annots['duplex_childs'], 'triplet_childs':final_annots['triplet_childs']}
         self.num_videos = len(self.video_list)
         self.print_str = ptrstr

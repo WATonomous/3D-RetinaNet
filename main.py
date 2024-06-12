@@ -13,6 +13,7 @@ from models.retinanet import build_retinanet
 from gen_dets import gen_dets, eval_framewise_dets
 from tubes import build_eval_tubes
 from val import val
+from format_acar_dets import format_acar_dets
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
@@ -23,9 +24,16 @@ def main():
     parser.add_argument('DATA_ROOT', help='Location to root directory for dataset reading') # /mnt/mars-fast/datasets/
     parser.add_argument('SAVE_ROOT', help='Location to root directory for saving checkpoint models') # /mnt/mars-alpha/
     parser.add_argument('MODEL_PATH',help='Location to root directory where kinetics pretrained models are stored')
-    
-    parser.add_argument('--MODE', default='train',
-                        help='MODE can be train, gen_dets, eval_frames, eval_tubes define SUBSETS accordingly, build tubes')
+    parser.add_argument('--ACAR_DET_SAVE_DIR', default = "./acar", help='Location to root directory for saved acar detection results')
+    parser.add_argument('--PRED_CSV', default ="/project/action-classification/output/tube_norm/text/predict_epoch_11.csv", help="location of the prediction file that we want to use") 
+    #parser.add_argument('--PRED_CSV', default ="/road/tube_robust_30_01.csv", help="location of the prediction file that we want to use")
+    #parser.add_argument('--PRED_CSV', default ="/road/predict_epoch_6.csv", help="location of the prediction file that we want to use")
+    #parser.add_argument('--PRED_CSV', default ="../action-classification/output/text/predict_epoch_11.csv", help="location of the prediction file that we want to use")
+    parser.add_argument('--ACTION_THRESHOLD', default=0.025, type=float, help="threshold for making action classification tubes")
+    parser.add_argument('--REMOVE_LOW_THRESH', default=0.001, type=float, help="threshold for making action classification tubes")
+
+    parser.add_argument('--MODE', default='eval_external',
+                        help='MODE can be train, gen_dets, eval_frames, eval_tubes, eval_external define SUBSETS accordingly, build tubes')
     # Name of backbone network, e.g. resnet18, resnet34, resnet50, resnet101 resnet152 are supported
     parser.add_argument('--ARCH', default='resnet50', 
                         type=str, help=' base arch')
@@ -151,7 +159,7 @@ def main():
                         type=int, help='Number of labels to assign for a tube')
     parser.add_argument('--TUBES_MINLEN', default=5,
                         type=int, help='minimum length of a tube')
-    parser.add_argument('--TUBES_EVAL_THRESHS', default='0.2,0.5',
+    parser.add_argument('--TUBES_EVAL_THRESHS', default='0.1,0.2,0.5',
                         type=str, help='evaluation threshold for checking tube overlap at evaluation time, one can provide as many as one wants')
     # parser.add_argument('--TRAIL_ID', default=0,
     #                     type=int, help='eval TUBES_Thtrshold at evaluation time')
@@ -189,7 +197,7 @@ def main():
     logger = utils.get_logger(__name__)
     logger.info(sys.version)
 
-    assert args.MODE in ['train','val','gen_dets','eval_frames', 'eval_tubes'], 'MODE must be from ' + ','.join(['train','test','tubes'])
+    assert args.MODE in ['train','val','gen_dets','eval_frames', 'eval_tubes', 'eval_external'], 'MODE must be from ' + ','.join(['train','test','tubes'])
 
     if args.MODE == 'train':
         args.TEST_SEQ_LEN = args.SEQ_LEN
@@ -279,7 +287,11 @@ def main():
         eval_framewise_dets(args, val_dataset)
     elif args.MODE == 'eval_tubes':
         build_eval_tubes(args, val_dataset)
-    
+    elif args.MODE == 'eval_external':
+        if not os.path.exists(args.ACAR_DET_SAVE_DIR):
+            format_acar_dets(args)
+        eval_framewise_dets(args, val_dataset)
+        build_eval_tubes(args, val_dataset)
 
 if __name__ == "__main__":
     main()

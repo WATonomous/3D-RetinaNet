@@ -342,7 +342,7 @@ def compute_class_ap(class_dets, class_gts, match_func, iou_thresh, metric_type=
     return class_ap, num_postives, count, pr[count+1, 1]
 
 
-def evaluate_tubes(anno_file, det_file,  subset='val_3', dataset='road', iou_thresh=0.2, metric_type='stiou'):
+def evaluate_tubes(anno_file, det_file, mode, subset='val_3', dataset='road', iou_thresh=0.2, metric_type='stiou'):
 
     logger.info('Evaluating tubes for datasets '+ dataset)
     logger.info('GT FILE:: '+ anno_file)
@@ -361,6 +361,8 @@ def evaluate_tubes(anno_file, det_file,  subset='val_3', dataset='road', iou_thr
     if dataset == 'road':
         label_types = final_annots['label_types']
     else:
+        label_types = ['action']
+    if mode == "eval_external":
         label_types = ['action']
     
     results = {} 
@@ -387,6 +389,7 @@ def evaluate_tubes(anno_file, det_file,  subset='val_3', dataset='road', iou_thr
             class_dets = get_det_class_tubes(det_tubes, cl_id)
             class_gts = get_gt_class_tubes(gt_tubes, cl_id)
 
+            pickle.dump({'dets': class_dets, 'gts':class_gts}, open(f"{final_annots['action_labels'][cl_id]}_topk10_dets.pkl", 'wb'))
             class_ap, num_postives, count, recall = compute_class_ap(class_dets, class_gts, get_tube_3Diou, iou_thresh, metric_type=metric_type)
 
             recall = recall*100
@@ -537,7 +540,7 @@ def eval_framewise_ego_actions(final_annots, detections, subsets, dataset='road'
         return eval_framewise_ego_actions_ucf24(final_annots, detections, subsets)
 
 
-def evaluate_frames(anno_file, det_file, subset, iou_thresh=0.5, dataset='road'):
+def evaluate_frames(anno_file, det_file, subset, iou_thresh=0.5, dataset='road', mode='eval_external'):
     
 
     logger.info('Evaluating frames for datasets '+ dataset)
@@ -557,6 +560,8 @@ def evaluate_frames(anno_file, det_file, subset, iou_thresh=0.5, dataset='road')
         label_types = ['av_actions'] + ['agent_ness'] + final_annots['label_types']
     else:
         label_types = ['frame_actions', 'action_ness', 'action']
+    if mode == "eval_external":
+        label_types = ['action']
     t1 = time.perf_counter()
     logger.info('Time taken to load for evaluation {}'.format(t1-t0))
     for nlt, label_type in enumerate(label_types):

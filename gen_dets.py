@@ -180,10 +180,11 @@ def gather_framelevel_detection(args, val_dataset):
     for l, ltype in enumerate(args.label_types):
         detections[ltype] = {}
     
-    if args.DATASET == 'road':
-        detections['av_actions'] = {}
-    else:
-        detections['frame_actions'] = {}
+    if args.MODE != "eval_external":
+        if args.DATASET == 'road':
+            detections['av_actions'] = {}
+        else:
+            detections['frame_actions'] = {}
     numv = len(val_dataset.video_list)
 
     for vid, videoname in enumerate(val_dataset.video_list):       
@@ -197,10 +198,11 @@ def gather_framelevel_detection(args, val_dataset):
                 dets = pickle.load(ff)
             frame_name = frame_name.rstrip('.pkl')
             # detections[videoname+frame_name] = {}
-            if args.DATASET == 'road':
-                detections['av_actions'][videoname+frame_name] = dets['ego']
-            else:
-                detections['frame_actions'][videoname+frame_name] = dets['ego']
+            if args.MODE != "eval_external":
+                if args.DATASET == 'road':
+                    detections['av_actions'][videoname+frame_name] = dets['ego']
+                else:
+                    detections['frame_actions'][videoname+frame_name] = dets['ego']
             frame_dets = dets['main']
             
             if args.JOINT_4M_MARGINALS:
@@ -249,10 +251,18 @@ def get_ltype_dets(frame_dets, start_id, numc, ltype, args):
 
 def eval_framewise_dets(args, val_dataset):
     for epoch in args.EVAL_EPOCHS:
-        log_file = open("{pt:s}/frame-level-resutls-{it:06d}-{sq:02d}-{n:d}.log".format(pt=args.SAVE_ROOT, it=epoch, sq=args.TEST_SEQ_LEN, n=int(100*args.GEN_NMS)), "a", 10)
-        args.det_save_dir = os.path.join(args.SAVE_ROOT, "detections-{it:02d}-{sq:02d}-{n:d}/".format(it=epoch, sq=args.TEST_SEQ_LEN, n=int(100*args.GEN_NMS)))
-        args.det_file_name = "{pt:s}/frame-level-dets-{it:02d}-{sq:02d}-{n:d}.pkl".format(pt=args.SAVE_ROOT, it=epoch, sq=args.TEST_SEQ_LEN, n=int(100*args.GEN_NMS))
-        result_file = "{pt:s}/frame-ap-results-{it:02d}-{sq:02d}-{n:d}.json".format(pt=args.SAVE_ROOT, it=epoch, sq=args.TEST_SEQ_LEN,n=int(100*args.GEN_NMS))
+        if args.MODE == 'eval_external':
+            if not os.path.exists(os.path.join(args.ACAR_DET_SAVE_DIR, "processed")):
+                os.makedirs(os.path.join(args.ACAR_DET_SAVE_DIR, "processed"))
+            args.det_save_dir = args.ACAR_DET_SAVE_DIR
+            log_file = open(os.path.join(args.det_save_dir, "processed/frame-level-result.log"), "a", 10)
+            args.det_file_name = os.path.join(args.det_save_dir, "processed/frame-level-dets.pkl")
+            result_file = os.path.join(args.det_save_dir, "processed/frame-ap-results.json")
+        else:
+            log_file = open("{pt:s}/frame-level-resutls-{it:06d}-{sq:02d}-{n:d}.log".format(pt=args.SAVE_ROOT, it=epoch, sq=args.TEST_SEQ_LEN, n=int(100*args.GEN_NMS)), "a", 10)
+            args.det_save_dir = os.path.join(args.SAVE_ROOT, "detections-{it:02d}-{sq:02d}-{n:d}/".format(it=epoch, sq=args.TEST_SEQ_LEN, n=int(100*args.GEN_NMS)))
+            args.det_file_name = "{pt:s}/frame-level-dets-{it:02d}-{sq:02d}-{n:d}.pkl".format(pt=args.SAVE_ROOT, it=epoch, sq=args.TEST_SEQ_LEN, n=int(100*args.GEN_NMS))
+            result_file = "{pt:s}/frame-ap-results-{it:02d}-{sq:02d}-{n:d}.json".format(pt=args.SAVE_ROOT, it=epoch, sq=args.TEST_SEQ_LEN,n=int(100*args.GEN_NMS))
         
         if args.JOINT_4M_MARGINALS:
             log_file = open("{pt:s}/frame-level-resutls-{it:06d}-{sq:02d}-{n:d}-j4m.log".format(pt=args.SAVE_ROOT, it=epoch, sq=args.TEST_SEQ_LEN, n=int(100*args.GEN_NMS)), "a", 10)
@@ -268,11 +278,13 @@ def eval_framewise_dets(args, val_dataset):
         else:
             logger.info('Detection will be loaded: ' + args.det_file_name)
         
-        if args.DATASET == 'road':
-            label_types =  args.label_types + ['av_actions']
+        if args.MODE != "eval_external":
+            if args.DATASET == 'road':
+                label_types =  args.label_types + ['av_actions']
+            else:
+                label_types = args.label_types + ['frame_actions']
         else:
-            label_types = args.label_types + ['frame_actions']
-
+            label_types = args.label_types
         if doeval or not os.path.isfile(result_file):
             results = {}
             
@@ -280,7 +292,7 @@ def eval_framewise_dets(args, val_dataset):
                 if len(subset)<2:
                     continue
 
-                sresults = evaluate_frames(val_dataset.anno_file, args.det_file_name, subset, iou_thresh=0.5, dataset=args.DATASET)
+                sresults = evaluate_frames(val_dataset.anno_file, args.det_file_name, subset, iou_thresh=0.5, dataset=args.DATASET,mode = args.MODE)
                 for _, label_type in enumerate(label_types):
                     name = subset + ' & ' + label_type
                     rstr = '\n\nResults for ' + name + '\n'

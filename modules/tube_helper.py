@@ -3,6 +3,7 @@ import pdb
 from modules import utils
 import scipy.signal as signal
 logger = utils.get_logger(__name__)
+from tqdm import tqdm
 from scipy.signal import savgol_filter
 # from gen_dets import make_joint_probs_from_marginals
 from modules.utils import make_joint_probs_from_marginals
@@ -55,12 +56,43 @@ def make_gt_tube(frames, boxes, label_id):
     tube['label_id'] = label_id
     return tube
 
-def trim_tubes(start_id, numc, paths, childs, num_classes_list, topk=5, alpha=3, min_len=3, trim_method='None'):
+def interpolate_fill(boxes, scores, frames):
+    """interpolate box coordinates for filling gaps between
+    frames with detections. Also interpolate scores
+    resulting frames should be consecutive integers from frames[0]
+    to frames[-1].
+
+    Parameters
+    ----------
+    boxes : np.ndarray
+        array of boxes in the tube
+    scores : np.ndarray
+        array of scores, with indices matching with boxes
+    frames : np.ndarray
+        array of frames indices, which may have gaps
+    """
+
+    final_frames = np.arange(frames[0], frames[-1] + 1)
+    final_boxes = np.zeros((len(final_frames), 4))
+    final_scores = np.zeros(len(final_frames))
+
+    # iterate through frames to find gaps
+    evaluate_at = final_frames.astype(float)    
+    xp = np.array(frames, dtype = float) # x-coords (frame indices)
+    final_boxes[:, 0] = np.interp(evaluate_at, xp, boxes[:, 0])
+    final_boxes[:, 1] = np.interp(evaluate_at, xp, boxes[:, 1])
+    final_boxes[:, 2] = np.interp(evaluate_at, xp, boxes[:, 2])
+    final_boxes[:, 3] = np.interp(evaluate_at, xp, boxes[:, 3])
+    final_scores = np.interp(evaluate_at, xp, scores)
+
+    return final_boxes, final_scores, final_frames
+
+def trim_tubes(start_id, numc, paths, childs, args, topk=5, alpha=3, min_len=3, trim_method='None'):
     """ Trim the paths into tubes using DP"""
     tubes = []
-    for path in paths:
+    for path in tqdm(paths):
         if len(childs)>0:
-            allScores = make_joint_probs_from_marginals(path['allScores'], childs, num_classes_list, start_id=0)
+            allScores = make_joint_probs_from_marginals(path['allScores'], childs, args.num_classes_list, start_id=0)
         else:
             allScores = path['allScores']
         allScores = allScores[:,start_id:start_id+numc]
@@ -69,15 +101,59 @@ def trim_tubes(start_id, numc, paths, childs, num_classes_list, topk=5, alpha=3,
             continue
         
         # print(allScores.shape)
-        if trim_method == 'none': # 
+        if args.MODE == "eval_external":
+            get_topk = get_topk_classes_median
+        else:
+            get_topk = get_topk_classes
+        if trim_method == 'thresh':
+            topk_classes, topk_scores = get_topk(allScores, len(allScores[0]))
+            k = 0
+            while topk_scores[k] > args.ACTION_THRESHOLD and k < len(topk_scores):
+                label, start, end = topk_classes[k], path_start_frame, allScores.shape[0] + path_start_frame 
+                if end-start+1 > min_len:
+                    # tube = get_nonnp_det_tube(allScores[:,label], path['boxes'], int(start), int(end), int(label))
+                    tube = get_nonnp_det_tube(allScores[:,label], path['boxes'], int(start), int(end), int(label), score=topk_scores[k])
+                    tubes.append(tube)
+                k += 1
+        elif trim_method == 'none': # 
             # print('no trimming')
-            topk_classes, topk_scores = get_topk_classes(allScores, topk)
+            topk_classes, topk_scores = get_topk(allScores, topk)
             for i in range(topk):
+                #if topk_scores[i] < 0.01:
+                #    continue
                 label, start, end = topk_classes[i], path_start_frame, allScores.shape[0] + path_start_frame 
                 if end-start+1 > min_len:
                     # tube = get_nonnp_det_tube(allScores[:,label], path['boxes'], int(start), int(end), int(label))
                     tube = get_nonnp_det_tube(allScores[:,label], path['boxes'], int(start), int(end), int(label), score=topk_scores[i])
+                    tube['confidence_order'] = i
                     tubes.append(tube)
+        elif trim_method == 'remove_low':
+            # print('no trimming')
+            topk_classes, topk_scores = get_topk(allScores, topk)
+            for i in range(topk):
+                # if topk_scores[i] < 0.01:
+                #    continue
+                label, start, end = topk_classes[i], path_start_frame, allScores.shape[0] + path_start_frame 
+                std = np.std(allScores)
+                mask = allScores[:, label] > args.REMOVE_LOW_THRESH
+                # mask = allScores[:, label] > 0.001
+                if not any(mask):
+                    continue
+                locs = np.where(mask == True)[0]
+                trimmed_boxes = path['boxes'][locs[0] : locs[-1]+1]
+                trimmed_scores = allScores[:, label][locs[0]: locs[-1]+1]
+                trimmed_frames = path['foundAt'][locs[0]: locs[-1]+1]
+                trimmed_boxes, trimmed_scores, trimmed_frames = interpolate_fill(trimmed_boxes, trimmed_scores, trimmed_frames)
+                start = path_start_frame + locs[0]
+                end = start + len(trimmed_boxes)
+                if end-start+1 > min_len:
+                    # tube = get_nonnp_det_tube(allScores[:,label], path['boxes'], int(start), int(end), int(label))
+
+                    tube = get_nonnp_det_tube(trimmed_scores, trimmed_boxes, int(start), int(end), int(label), score=topk_scores[i])
+                    tube['orig_frames'] = trimmed_frames
+                    tube['confidence_order'] = i
+                    tubes.append(tube)
+
         elif trim_method == 'dpscores': ## standarded method Multi class-DP
             allScores = path['allScores'][:,start_id:start_id+numc]
             score_mat = np.transpose(allScores.copy())
@@ -137,7 +213,7 @@ def trim_tubes(start_id, numc, paths, childs, num_classes_list, topk=5, alpha=3,
             else:
                 alphas = np.zeros(numc)+alpha
                 
-            topk_classes, topk_scores = get_topk_classes(allScores, topk)
+            topk_classes, topk_scores = get_topk(allScores, topk)
             for idx in range(topk_classes.shape[0]):
                 current_label = int(topk_classes[idx])
                 if numc == 24:
@@ -188,6 +264,35 @@ def getLabels(segments, cls=1):
             labels[i] = fl
     ends[i] = len(segments)-1
     return labels[:i+1],starts[:i+1],ends[:i+1]
+
+def get_topk_classes_median(allScores, topk):
+    scores = np.zeros(allScores.shape[1])
+    for k in range(scores.shape[0]):
+        temp_scores = allScores[:,k]
+        med = len(temp_scores)//2
+        #scores[k] = temp_scores[med]
+        scores[k] = np.mean(temp_scores[max(0, med-1):min(len(temp_scores), med+1)])
+        #scores[k] = max(0.0, np.mean(temp_scores) - np.std(temp_scores))
+        # print(sorted_score[:topn])
+    sorted_classes = np.argsort(-scores)
+    sorted_scores = scores[sorted_classes]
+    # sorted_scores = sorted_scores/np.sum(sorted_scores)
+    # print(sorted_scores)
+    return sorted_classes[:topk], sorted_scores[:topk]
+
+
+def get_topk_classes_avg(allScores, topk):
+    scores = np.zeros(allScores.shape[1])
+    for k in range(scores.shape[0]):
+        temp_scores = allScores[:,k]
+        scores[k] = max(0.0, np.mean(temp_scores) - np.std(temp_scores))
+        # print(sorted_score[:topn])
+    sorted_classes = np.argsort(-scores)
+    sorted_scores = scores[sorted_classes]
+    # sorted_scores = sorted_scores/np.sum(sorted_scores)
+    # print(sorted_scores)
+    return sorted_classes[:topk], sorted_scores[:topk]
+
 
 def get_topk_classes(allScores, topk):
     scores = np.zeros(allScores.shape[1])
